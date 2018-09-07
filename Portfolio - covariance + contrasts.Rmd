@@ -1,0 +1,339 @@
+---
+title: "Portfolio 3 - Covariance + contrasts"
+author: Carl-Magnus Christiansen, Anders Weile Larsen, Jakob Johannesson Moerup, Signe
+  Kloeve Kjaer
+date: "16 feb 2018"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r}
+setwd("/Users/signeklovekjaer/Documents/Cognitive Science/2. semester/Experimental methods 2/Assignments/3 - Covariance")
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(reshape2)
+library(pastecs)
+```
+
+
+```{r}
+#load data as matrix
+fmri<-as.matrix(read.csv("portfolio_assignment3_aud_fmri_data37.csv", header=FALSE))
+
+#making it a time-series
+fmri2<-ts(fmri) #a single voxel in auditory cortex, 37 participants (different columns), at different points in time
+
+#load designs models, used to explain the difference in brain signal between the two stories 
+fmrides<-as.matrix(read.csv("portfolio_assignment3_aud_fmri_design.csv", header=FALSE))
+
+#making it a time-series
+fmrides2<-ts(fmrides) #hemodynamic response, two stories (different columns), at different points in time
+
+#calculate number of rows in dataset and designs
+nrow(fmrides2)
+nrow(fmri2)
+```
+
+1 - Initial figures
+
+1.a. A figure with lineplots of the data from all participants as a function of time in one figure. Note how
+much the baseline signal can vary between participants.
+
+```{r}
+#transform data into long format with melt()
+long_fmri <- melt(fmri)
+
+#make lineplot for all participants
+#group and color by participants
+line_plot <- ggplot(long_fmri, aes(x = Var1, y = value, group = Var2, color = Var2))
+
+line_plot + geom_line() + labs(x="time", y = "value") + theme(legend.position = "none")
+
+```
+We can see how the baseline level is different between participants. 
+
+1.b. A figure lineplots with the model covariates.
+
+```{r}
+#make dataframe into long format
+long_fmrides <- melt(fmrides)
+
+#make lineplot grouped by designs 
+line_plot_model <- ggplot(long_fmrides, aes(x = Var1, y = value, group = Var2, color = Var2))
+
+line_plot_model + geom_line() + labs(x = "time", y = "value") 
+
+```
+
+2 - Investigating model
+
+2.1 How many stories did the participants listen to in each condition?
+
+In the lineplot of the hemodynamic response designs we can see that the participants listened to 15 stories in each condition.
+
+
+2.2 Are the two model covariates correlated?
+
+We want to know if the two desings v1 and v2 are correlated
+```{r}
+#transform matrix into dataframe
+fmrides_df <- as.data.frame(fmrides)
+
+#testing for normal distribution
+round(stat.desc(fmrides_df$V1, norm = TRUE), 3)
+round(stat.desc(fmrides_df$V2, norm = TRUE), 3)
+
+#the designs are not normally distributed, therefore we use spearman
+
+#using cor.test with method = spearman 
+cor <- cor.test(fmrides_df$V1, fmrides_df$V2, method = "spearman")
+cor
+```
+
+The p-value is significant. 
+The two covariates are negatively correlated. 
+
+Rho is the effect size. It's above 0.5 and therefore a large effect size. 
+
+
+2.3 Have the covariates been mean-centered?
+
+We will check if the mean of each design is 0. 
+```{r}
+#using mean() 
+mean(fmrides_df$V1)
+mean(fmrides_df$V2)
+```
+The means of both covariates come very close to zero, which means that the covariates have been centered around the mean.  
+
+
+2.4 Please report the percentage of shared variance in the two covariates.
+
+We can calculate the percentage of shared variance by squaring rho from the correlation. 
+Rho is the effect size and r^2 is the amount of variance which they share.
+
+
+```{r}
+#shared variance 
+cor$estimate^2
+```
+So the two covariates share 33.76 % of the variance.  
+
+
+5 - Single participant
+Pick one participant’s data set.
+Conduct 6 analyses using lm():
+
+```{r}
+#create dataframe to use $ to pick out participant
+fmri_df <- as.data.frame(fmri)
+
+#pick out participant no 17 
+par_17 <- fmri_df$V17
+
+par_17
+```
+
+
+5.a. Fit the model as it is, including intercept.
+
+```{r}
+#make linear regression model with V1 and V2 as covariates 
+model_with_inter <- lm(par_17 ~ fmrides_df$V1 + fmrides_df$V2)
+summary(model_with_inter)
+```
+
+
+5.b. Fit the model as it is, excluding intercept.
+
+```{r}
+#tell R to use zero as intercept by adding 0 
+model_ex_inter <- lm(par_17 ~ 0 + fmrides_df$V1 + fmrides_df$V2)
+summary(model_ex_inter)
+
+```
+The intercept is zero and the b-estimates is the same = same slope. 
+What we have done is just moving the graph downwards, so it start in zero instead of 907, which was the previous intercept.  
+
+5.c. Fit only the 1st covariate as a model.
+
+```{r}
+#make linear regression model with only the first design as covariate 
+model_first <- lm(par_17 ~ fmrides_df$V1)
+summary(model_first)
+```
+
+5.d. Fit only the 2nd covariate as a model.
+
+```{r}
+#make linear regression model with only the second design as covariate 
+model_second <- lm(par_17 ~ fmrides_df$V2)
+summary(model_second)
+```
+
+The residuals represent the variance left when fitting a model. They are thus data that have been “cleaned”
+from the variance explained by the model. We can use those “cleaned” data to fit another model on. This is
+similar to using a type III sum of squares approach to your statistics.
+
+
+5.e. Fit the 2nd covariate to the residuals from analysis 5.c., the 1st covariate only analysis
+```{r}
+#make linear regression model with residuals from model explained by first design as outcome with second design
+#as covariate
+model_residual_first <- lm(model_first$residuals ~ fmrides_df$V2)
+summary(model_residual_first)
+```
+
+
+
+5.f. Fit the 1st covariate to the resistuals from 5.d., the 2nd covariate only analysis
+
+```{r}
+#make linear regression model with residuals from model explained by second design as outcome with second design
+#as covariate
+model_residual_second <- lm(model_second$residuals ~ fmrides_df$V1)
+summary(model_residual_second)
+```
+
+5.g. Does the order in which the predictor variables are fitted to the data matter for the estimates? If it does,
+what can explain this?
+
+The order in which the predictor variables are fitted to the data, determines the estimates as the covariates explain the same variance. 
+
+In 5c we make a model, where we use the first design as covariate and then take the second design and fit it to the residuals from that model. 
+
+In 5d we instead make a model fitted by the second design and afterwards fit the first design to the residuals from that model. 
+
+If the two covariates did not explain the same variance, it should not make a difference in which order we fitted the covariates to the data --> but it does, the estimates and p-values are different in 5.e and 5.f --> so they share variance.  
+
+
+
+6 - Group level analyses
+Fit the full model to each of the 37 participants’ data and extract the coefficients for each participant. (hint: the full participant data frame can be set as outcome. Alternatively, you can change the data
+structure and use lmList from assignement 1).
+
+
+```{r}
+#we set the full participant data as outcome and use the two designs as predictor variables 
+coef_model <- lm(fmri ~ fmrides)
+
+#extract the coefficients for each participant from the model
+coef_model <- coef_model$coefficients
+
+```
+
+
+
+6.a. Test the two individual hypotheses that the set of coefficient from each covariate is different from zero across the whole group (similar to assignment 1).
+
+
+```{r}
+#turn into dataframe + transpose matrix
+trans_coef_model <- as.data.frame(t(coef_model))
+
+#use t-test, compare coefficients from both covariates against 0 
+t.test(trans_coef_model$fmridesV1, mu = 0)
+
+t.test(trans_coef_model$fmridesV2, mu = 0)
+```
+
+The coefficients are significantly different from zero for both covariates. 
+
+The confidence intervals are on the same side of 0. 
+
+Make a contrast that investigates the difference between the two covariates, i.e. the two types of stories (hint: subtraction).
+
+```{r}
+#make contrast investigating the difference between the two covariates (we subtract them from each other)
+trans_coef_model$contrast <- trans_coef_model$fmridesV1 -trans_coef_model$fmridesV2
+```
+
+
+6.b. Test the hypothesis that the contrast is different from zero across participants.
+```{r}
+#use t-test and compare against zero
+t.test(trans_coef_model$contrast, mu = 0)
+```
+
+The contrast is not significantly different from 0 and we don't know what it means????? 
+
+
+6.c. Make a bar diagram including the mean effect of the two coefficents and the contrast, including error bars (indicating standard error of mean).l
+
+```{r}
+#Creating the plot
+trans_coef_model_no_intercept <- trans_coef_model[,2:4]
+
+trans_coef_model_no_intercept_long <- melt(trans_coef_model_no_intercept)
+
+ggplot(trans_coef_model_no_intercept_long, aes(x=variable, y=value, fill = variable)) +
+  geom_bar(stat = "summary", fun.y=mean) + 
+  geom_errorbar(stat = "summary", fun.data = mean_se, width = 0.4) + 
+  labs(title = "Mean effect of covariates")
+
+```
+The bar plots show that the effect of the covariates are similar, which was also shown in 6b, where the contrast between the covariates was not significantly different from 0. 
+The errorbars of the contrast cross zero as also seen in 6b. 
+
+7 - Adding a covariate
+7.a. For each partipant, add a covariate that models the effect of time (hint: 1:400). 
+
+7.a. Does that improve the group results in term of higher t-values?
+```{r}
+#make a list with numbers from 1 to 400, presenting the effect of time
+time <- seq(1, 400, 1)
+
+#add time column to data with the two designs, as we will use all of them as predictors 
+fmrides2 <- cbind(fmrides, time)
+
+#make new regression model using time as predictor as well
+model_with_time <- lm(fmri ~ fmrides2)
+
+#extract coefficients from model
+coef_model_with_time <- model_with_time$coefficients
+
+#transform into dataframe and transpose to assign variable to columns instead of rows
+trans_coef_model_with_time <- as.data.frame(t(coef_model_with_time))
+
+#t.testing the new model with time to see if the effect has increased
+t.test(trans_coef_model_with_time$fmrides2V1, mu = 0) #
+
+t.test(trans_coef_model_with_time$fmrides2V2, mu = 0)
+
+```
+
+The t-values have increased by using time as a covariate. 
+
+8. Make a bar diagram like the above, but display effects as percent signal change (hint: percent signal change is slope divided by intercept).
+
+```{r}
+#define three vectors corresponding to intercepts and slopes for the two covariates
+intercept <- trans_coef_model_with_time[1]
+slope1 <- trans_coef_model_with_time[2]
+slope2 <- trans_coef_model_with_time[3]
+
+#create new matrix with percent signal change values
+percent_change <- c((slope1/intercept)*100, (slope2/intercept)*100)
+
+#turn into dataframe
+percent_change_df <- as.data.frame(percent_change)
+
+#turn into long format
+percent_change_long <- melt(percent_change_df)
+
+#use ggplot to show percent signal change
+ggplot(percent_change_long, aes(x=variable, y=value, fill = variable))+
+  geom_bar(stat = "summary", fun.y=mean)+ 
+  geom_errorbar(stat = "summary", fun.data = mean_se, width = 0.4)+
+  labs(title = "The product of blood, sweat and tears", x = "Variable", y = "Percent signal increase") #Adding titles
+
+```
+
+
+
