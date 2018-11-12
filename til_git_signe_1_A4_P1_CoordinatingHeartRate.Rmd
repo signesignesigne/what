@@ -1,0 +1,1027 @@
+---
+title: "Assignment 4 - Coordinating Heart Rate"
+author: "Riccardo Fusaroli"
+date: "November 6, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_knit$set(root.dir = normalizePath("/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/EXPMETH3/Assignment 4/data/CleanData"))
+
+```
+
+## Analysing Heart Rate and Respiration data
+
+
+Data collection process
+- Goal of experiment --> how can we analyse coordination
+- The tasks: read out loud (at the same time, taking turns)
+- So difference between synchronous and turn-taking: for syn
+
+
+synchonized at the same time --> expect recurrence around the center line (will see blocks)
+
+Everyblack thing is a monement where the two trajectories are in the same place
+
+What counts as similar activation --> have to decide on threshold (the number is arbitrary)
+- The same threshold should be used for all participants
+- Need to rescale and center datapoints for all participants (have them on the same scale to be able to compare)
+
+What if there are big artefacts?? 
+- Exclude outliers by defining threshold (could look at quartiles, or some number * sd, Malte says use sd)
+- Need to plot the data --> do preprocessing --> plot the data (is everything okay)
+- What should we put instead of the excluded data? 
+- fit a cubic spline --> 200::na.spline --> important to plot it 
+- Possible to do the preprocessing in different ways --> save all of them --> do the analysis --> check whether the preprocessing affects the results
+
+Downsampling (too much data)
+- we have way more data than we need! --> computation time 
+- Take 100 datapoint, find the mean, take 100 data point, find the mean --> call it the mean of the timeinterval
+- find a sliding mean, take 200 and find mean, when slide 100, take 200 and find mean
+
+
+rqa
+- pick parameters
+    - lmax --> length of the longest line
+    - l --> the mean length of lines (do not count dots, but when there is two or more)
+    - RR --> recurrences (how many recurrences within the timeseries)
+    - trapping time, TT --> straight lines 
+    - Determinism, DET --> the ratio of all the recurrences, how many are part of a diaganol line
+    
+    
+In last question --> focus on L, RR; DET
+
+
+- run rqa
+- how do we analysis of the plot?
+- COmpare the two timeseries
+- Diagonal structures (follow each other in time)   
+    - Extract the length of the lines
+        - A lot of small lines after each other (could be due to noisy data, could be to the threshold)
+    - A short line in random places --> short intervals of synchronization
+
+Three ways to do statistical comparison:
+- Do a comparison(is there a difference between people who do synchronization and turn-taking in the parameters)
+
+- shuffle time series, to get a baseline (what we think is relevant is the order in time), use sample()
+    - run through rqa again 
+    
+- how do we know that there is something special about heartrates for this experiment (and not just similarity in heart rate, which is present at all times)
+    - shuffle across pairs, to get baseline, use grid.expand() to get every combination of participants
+    - run through rqa again
+
+
+
+
+
+Order:
+- Downsample
+- Remove outliers (cubic spline)
+
+
+
+The goal of this assignment is to first familiarize you with heart rate, and respiration data and their preprocessing. The second part explores how to analyze interpersonal coordination of these signals.
+
+These are the questions you need to be able to answer at the end of the assignment (aka that you need to submit as part of the portfolio)
+
+1) How do you preprocess heart rate and respiration data? Describe the process. If any data needs to be excluded, list the excluded data and motivate the exclusion.
+
+2) Do you observe interpersonal coordination in heart rate and respiration? Describe your control baseline, the method used to quantify coordination, and the statistical models used to infer whether coordination was higher than in the baseline. Report the results of the models.
+
+3) Do you observe differences in coordination between conditions? Report the models and results.
+
+4) Is respiration coordination a likely driver of heart rate coordination? Describe how you would test for it. Bonus points if you actually run the tests and report methods and results.
+
+N.B. Because of the timing, we're starting this exercise before collecting the data.
+Instead, you will develop your script this week on data from two years ago (Study1) and last year (Study2).
+When you hand in the assignment for feedback, you can use the old data. But when you hand in the final version for the exam, you need to adapt your script to use the data we collect next week in the lab.
+(For the old data): Note that synchronouns and turn-taking are the same task across both studies, but the third condition is different: two years ago it was self-paced joint reading; last year it was tv-series conversation.
+
+NB: For this exercise, you will need to do something very similiar to what you've done before spread over several weeks. Ie parse data, look at the plots, decide on data cleaning, build a model, and finally evaluate and interpret the results of the models. Going back and copying the approach from previous exercises will likely be a great help.
+
+## Step by step suggestions to solve the assignment
+
+### Exploring physiological signals
+
+- Choose one pair (one pair, three conditions)
+- Load the logs
+- Produce a plot of the participants' respiration signal and a different one of the participants' HR signal (for inspecting whether the data is usable)
+  N.B: remember the slides: artifacts, downsampling, scaling.
+  N.B. The gridExtra::grid.arrange() function allows you to display the plots side by side. E.g. grid.arrange(plot1, plot2, plot3, ncol=3)
+- Can you eye-ball which condition if any displays more physiological coordination?
+
+- Run crqa on heart rate and respiration data (find parameters, run crqa)
+- Does this tell you more than just eyeballing the plots?
+
+
+self-paced reading --> choose yourself how fast you are reading
+self-paced joined reading --> try to coordinate with each other 
+conversation --> natural talking
+turn-taking --> take turns reading a text outloud 
+
+```{r}
+#load libraries
+library(dplyr)
+library(groupdata2)
+library(ggplot2)
+library(tidyverse)
+library(purrr)
+library(stringr)
+library(crqa)
+```
+
+```{r}
+#choose one pair of participants from each condition
+
+data_selfPaced <- read.csv("Study1_G3_T1_SelfPaced.csv")
+data_turnTaking <- read.csv("Study1_G3_T2_TurnTaking.csv")
+data_sync <- read.csv("Study1_G3_T3_Synchronous.csv")
+
+
+#plot of the partipants heart rate data
+plot_HR_1 <- ggplot(data = data_selfPaced, aes(x = time)) +
+  geom_line(aes(y = HR1, colour = "HR1")) + 
+  geom_line(aes(y = HR2, colour = "HR2")) + labs(title = "Heart rate - Selfpaced")
+
+plot_HR_1
+
+plot_HR_2 <- ggplot(data = data_turnTaking, aes(x = time)) +
+  geom_line(aes(y = HR1, colour = "HR1")) + 
+  geom_line(aes(y = HR2, colour = "HR2")) + labs(title = "Heart rate - Turntaking")
+
+plot_HR_2
+
+plot_HR_3 <- ggplot(data = data_sync, aes(x = time)) +
+  geom_line(aes(y = HR1, colour = "HR1")) + 
+  geom_line(aes(y = HR2, colour = "HR2")) + labs(title = "Heart rate - Synchronous")
+
+plot_HR_3
+
+
+#looks like there are some outliers for participant 1  in condition 1 
+  
+
+#plot of the participants respiration data
+plot_Resp_1 <- ggplot(data = data_selfPaced, aes(x = time)) +
+  geom_line(aes(y = Resp1, colour = "Resp1")) + 
+  geom_line(aes(y = Resp2, colour = "Resp2")) + labs(title = "Respiration - Selfpaced")
+
+plot_Resp_1
+
+plot_Resp_2 <- ggplot(data = data_turnTaking, aes(x = time)) +
+  geom_line(aes(y = Resp1, colour = "Resp1")) + 
+  geom_line(aes(y = Resp2, colour = "Resp2")) + labs(title = "Respiration - Turntaking")
+
+plot_Resp_2
+
+plot_Resp_3 <- ggplot(data = data_sync, aes(x = time)) +
+  geom_line(aes(y = Resp1, colour = "Resp1")) + 
+  geom_line(aes(y = Resp2, colour = "Resp2")) + labs(title = "Respiration - Synchronous")
+
+plot_Resp_3
+
+
+```
+
+```{r}
+#downsample
+data1_down <- data_selfPaced %>%
+  group(n = 100, method = 'greedy') %>%
+  dplyr::summarise(
+    time = mean(time, na.rm = T),
+    HR1 = mean(HR1, na.rm = T),
+    HR2 = mean(HR2, na.rm = T), 
+    Resp1 = mean(Resp1, na.rm = T),
+    Resp2 = mean(Resp2, na.rm = T))
+
+data_turnTaking <- data_turnTaking %>%
+  group(n = 100, method = 'greedy') %>%
+  dplyr::summarise(
+    time = mean(time, na.rm = T),
+    HR1 = mean(HR1, na.rm = T),
+    HR2 = mean(HR2, na.rm = T), 
+    Resp1 = mean(Resp1, na.rm = T),
+    Resp2 = mean(Resp2, na.rm = T))
+
+
+data_sync <- data_sync%>%
+  group(n = 100, method = 'greedy') %>%
+  dplyr::summarise(
+    time = mean(time, na.rm = T),
+    HR1 = mean(HR1, na.rm = T),
+    HR2 = mean(HR2, na.rm = T), 
+    Resp1 = mean(Resp1, na.rm = T),
+    Resp2 = mean(Resp2, na.rm = T))
+
+
+  
+```
+
+```{r}
+#outlier removal --> cubic spline method
+
+fit a cubic spline --> 200::na.spline
+```
+
+
+
+```{r}
+#outlier removal  --> put in the mean instead
+removeOuts <- function(ts,threshold) { 
+  ts[ts > (mean(ts,na.rm=T) + (threshold*sd(ts,na.rm=T))) | 
+       ts < (mean(ts,na.rm=T) - (threshold*sd(ts,na.rm=T)))] = mean(ts,na.rm=T) 
+  return(ts)
+  } #return timeseries
+
+#set threshold
+threshold = 2.5
+
+#SELFPACED
+
+
+
+#remove outliers for heart rate
+data1_down$HR1_out <- removeOuts(data1_down$HR1, threshold)
+data1_down$HR2_out <- removeOuts(data1_down$HR2, threshold)
+
+#remove outliers for respiration
+data1_down$Resp1_out <- removeOuts(data1_down$Resp1, threshold)
+data1_down$Resp2_out <- removeOuts(data1_down$Resp2, threshold)
+
+#plot it 
+plot_HR_out <- ggplot(data = data1_down, aes(x = time)) +
+  geom_line(aes(y = HR1_out, colour = "HR1_out")) + 
+  geom_line(aes(y = HR2_out, colour = "HR2_out")) #the outliers which we observed earlier are removed 
+
+
+#plot of the participants respiration data
+plot_Resp_out <- ggplot(data = data1_down, aes(x = time)) +
+  geom_line(aes(y = Resp1_out, colour = "Resp1_out")) + 
+  geom_line(aes(y = Resp2_out, colour = "Resp2_out"))
+
+
+
+#TURNTAKING
+#remove outliers for heart rate
+data_turnTaking$HR1 <- removeOuts(data_turnTaking$HR1, threshold)
+data_turnTaking$HR2 <- removeOuts(data_turnTaking$HR2, threshold)
+
+#remove outliers for respiration
+data_turnTaking$Resp1 <- removeOuts(data_turnTaking$Resp1, threshold)
+data_turnTaking$Resp2 <- removeOuts(data_turnTaking$Resp2, threshold)
+
+
+#SYNCHRONOUS
+#remove outliers for heart rate
+data_sync$HR1 <- removeOuts(data_sync$HR1, threshold)
+data_sync$HR2 <- removeOuts(data_sync$HR2, threshold)
+
+#remove outliers for respiration
+data_sync$Resp1 <- removeOuts(data_sync$Resp1, threshold)
+data_sync$Resp2 <- removeOuts(data_sync$Resp2, threshold)
+
+```
+
+```{r}
+#SELFPACED
+
+#scale the signals to be center them, so we can compare 
+data1_down$Resp1_out_s <- scale(data1_down$Resp1_out)
+
+data1_down$Resp2_out_s <- scale(data1_down$Resp2_out)
+
+data1_down$HR1_out_s <- scale(data1_down$HR1_out)
+
+data1_down$HR2_out_s <- scale(data1_down$HR2_out)
+
+
+#plot heart rate 
+plot_HR_out_s <- ggplot(data = data1_down, aes(x = time)) +
+  geom_line(aes(y = HR1_out_s, colour = "HR1_out_s")) + 
+  geom_line(aes(y = HR2_out_s, colour = "HR2_out_s")) #the outliers which we observed earlier are removed 
+
+
+#plot of the participants respiration data
+plot_Resp_out_s <- ggplot(data = data1_down, aes(x = time)) +
+  geom_line(aes(y = Resp1_out_s, colour = "Resp1_out_s")) + 
+  geom_line(aes(y = Resp2_out_s, colour = "Resp2_out_s"))
+
+#TURNTAKING
+
+data_turnTaking$Resp1 <- scale(data_turnTaking$Resp1)
+
+data_turnTaking$Resp2 <- scale(data_turnTaking$Resp2)
+
+data_turnTaking$HR1 <- scale(data_turnTaking$HR1)
+
+data_turnTaking$HR2 <- scale(data_turnTaking$HR2)
+
+
+#SYNCHRONOUS
+data_sync$Resp1 <- scale(data_sync$Resp1)
+
+data_sync$Resp2 <- scale(data_sync$Resp2)
+
+data_sync$HR1 <- scale(data_sync$HR1)
+
+data_sync$HR2 <- scale(data_sync$HR2)
+
+```
+
+
+```{r}
+#SELFPACED
+
+#plot all the heart rate plots together
+gridExtra::grid.arrange(plot_HR_1, plot_HR_out, plot_HR_out_s, ncol = 3)
+
+
+#plot all the respiration plots together
+gridExtra::grid.arrange(plot_Resp, plot_Resp_out, plot_Resp_out_s, ncol = 3,top="Data preparation in steps: Downsampling --> + removal of outliers -->  + scaling")
+
+
+
+#COMPARE CONDITIONS
+
+#plot of the partipants heart rate data
+plot_HR_2 <- ggplot(data = data_turnTaking, aes(x = time)) +
+  geom_line(aes(y = HR1, colour = "HR1")) + 
+  geom_line(aes(y = HR2, colour = "HR2")) + labs(title = "Heart rate - Turntaking")
+
+plot_HR_2
+
+plot_HR_3 <- ggplot(data = data_sync, aes(x = time)) +
+  geom_line(aes(y = HR1, colour = "HR1")) + 
+  geom_line(aes(y = HR2, colour = "HR2")) + labs(title = "Heart rate - Synchronous")
+
+plot_HR_3
+
+#plot of the participants respiration data
+plot_Resp_2 <- ggplot(data = data_turnTaking, aes(x = time)) +
+  geom_line(aes(y = Resp1, colour = "Resp1")) + 
+  geom_line(aes(y = Resp2, colour = "Resp2")) + labs(title = "Respiration - Turntaking")
+
+plot_Resp_2
+
+plot_Resp_3 <- ggplot(data = data_sync, aes(x = time)) +
+  geom_line(aes(y = Resp1, colour = "Resp1")) + 
+  geom_line(aes(y = Resp2, colour = "Resp2")) + labs(title = "Respiration - Synchronous")
+
+plot_Resp_3
+
+
+
+
+#plot of condition heart rate
+gridExtra::grid.arrange(plot_HR_out_s, plot_HR_2, plot_HR_3, ncol = 3,top="Conditions heartrate: Selfpaced, Turntaking, Synchronous")
+
+
+
+#plot of condition respiration
+gridExtra::grid.arrange(plot_Resp_out_s, plot_Resp_2, plot_Resp_3, ncol = 3,top="Conditions respiration: Selfpaced, Turntaking, Synchronous")
+```
+
+
+### Systematically pre-process the data
+
+#visually eyeballing which files to exclude....
+
+```{r}
+
+path = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/EXPMETH3/Assignment 4/data/CleanData/"
+
+loop_plot_HR <- function(filename) {
+  data <- read.csv(file = paste(path, filename, sep = ""), sep = ",", header = TRUE) 
+  plot = ggplot(data = data, aes(x = time)) + geom_line(aes(y = HR1, colour = "HR1")) + geom_line(aes(y = HR2, colour = "HR2")) + labs(title= filename, y = "Heart Rate")
+  
+  return(plot)
+  
+}
+
+
+#test
+loop_plot_HR("Study1_G3_T1_SelfPaced.csv")
+
+
+path_HR = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/plotz_HR/"
+
+files <- list.files(path = path)
+
+files
+
+for (d in files) {
+  p = loop_plot_HR(d)
+  ggsave(p, file = paste(path_HR, d, "_HR", ".png", sep = ""))
+
+}
+
+
+
+
+#RESP
+
+path_Resp = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/plotz_Resp/"
+
+loop_plot_Resp <- function(filename) {
+  data <- read.csv(file = paste(path, filename, sep = ""), sep = ",", header = TRUE) 
+  plot = ggplot(data = data, aes(x = time)) + geom_line(aes(y = Resp1, colour = "Resp1")) + geom_line(aes(y = Resp2, colour = "Resp2")) + labs(title= filename, y = "Respiration")
+  
+  return(plot)
+  
+}
+
+#test
+loop_plot_Resp("Study1_G3_T1_SelfPaced.csv")
+
+for (d in files) {
+  p = loop_plot_Resp(d)
+  ggsave(p, file = paste(path_Resp, d, "_resp", ".png", sep = ""))
+
+}
+
+
+
+```
+
+
+G1_T1: exclude Resp1
+G1_T2: exclude Resp1
+G2_T1: exclude Resp2
+G2_T2: exclude Resp2
+
+
+- Loop through all the files (either with a loop or with a function), check which files should be excluded, if any, and save the pre-processed time-series. Tip: plot and visually inspect the data to figure out which should be excluded.
+
+```{r}
+
+
+#create function that preprocesses all data
+prep <- function(filename) {
+  #read data
+  data <- read.csv(file = paste(path, filename, sep = ""), sep = ",", header = TRUE)
+  
+  # parse filename
+  meta = str_extract_all(filename, "\\d+")
+  cond = substr(filename, 14, 19)
+  study = as.numeric(meta[[1]][1])
+  pair = as.numeric(meta[[1]][2])
+  trial = as.numeric(meta [[1]][3])
+
+  #downsample
+  down = NULL 
+  
+  down <- data %>%
+    group(n = 100, method = 'greedy') %>%
+    dplyr::summarise(
+      time = mean(time, na.rm = T),
+      HR1 = mean(HR1, na.rm = T),
+      HR2 = mean(HR2, na.rm = T), 
+      Resp1 = mean(Resp1, na.rm = T),
+      Resp2 = mean(Resp2, na.rm = T))
+  
+  #remove outliers for heart rate
+  down$HR1 <- removeOuts(down$HR1, threshold)
+  down$HR2 <- removeOuts(down$HR2, threshold)
+
+  #remove outliers for respiration
+  down$Resp1 <- removeOuts(down$Resp1, threshold)
+  down$Resp2 <- removeOuts(down$Resp2, threshold)
+  
+  #scale the signals to be center them, so we can compare 
+  down$HR1 <- scale(down$HR1)
+  down$HR2 <- scale(down$HR2)
+  down$Resp1 <- scale(down$Resp1)
+  down$Resp2 <- scale(down$Resp2)
+  
+  #create output
+  output = data.frame(pair, study, cond, trial, down$time, down$HR1, down$HR2, down$Resp1, down$Resp2)
+  
+  return(output)
+  
+}
+
+#filename = "Study1_G1_T1_Synchronous.csv"
+
+#testing the function 
+k <- prep("Study1_G1_T2_TurnTaking.csv")
+k
+
+#preprocess all files in loop
+prep_path = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/prep_data/"
+
+for (d in files) {
+  p = prep(d)
+  write.csv(p, file = paste(prep_path,"prep",d, sep = ""))
+  
+}
+
+
+
+```
+
+
+PLOT PREPROCESSED DATA
+
+
+
+
+```{r}
+#lets plot the prep data
+
+
+path_prep = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/prep_data/"
+
+
+'/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/prep_dataprepStudy2_G10_T1_Conversation.csv'
+
+#lets loop
+files_prep <- list.files(path = path_prep)
+
+files_prep
+
+
+loop_plot_HR_prep <- function(filename) {
+  data <- read.csv(file = paste(path_prep, filename, sep = ""), sep = ",", header = TRUE) 
+  plot = ggplot(data = data, aes(x = down.time)) + geom_line(aes(y = down.HR1, colour = "down.HR1")) + geom_line(aes(y = down.HR2, colour = "down.HR2")) + labs(title= filename, y = "Heart Rate - preprocessed")
+  
+  return(plot)
+  
+}
+
+
+
+path_HR_prep = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/plotz_HR_prep/"
+
+
+
+for (d in files_prep) {
+  p = loop_plot_HR_prep(d)
+  ggsave(p, file = paste(path_HR_prep,d,"_HR_prep.png", sep = ""))
+
+}
+
+
+
+ggsave(p, file = paste(path_HR_prep,d,"_HR_prep", ".png", sep = ""))
+
+#RESP
+
+path_Resp_prep = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/plotz_Resp_prep/"
+
+
+loop_plot_Resp_prep <- function(filename) {
+  data <- read.csv(file = paste(path_prep, filename, sep = ""), sep = ",", header = TRUE) 
+  plot = ggplot(data = data, aes(x = down.time)) + geom_line(aes(y = down.Resp1, colour = "down.Resp1")) + geom_line(aes(y = down.Resp2, colour = "down.Resp2")) + labs(title= filename, y = "Respiration - preprocessed")
+  
+  return(plot)
+  
+}
+
+
+
+
+for (d in files_prep) {
+  p = loop_plot_Resp_prep(d)
+  ggsave(p, file = paste(path_Resp_prep, d, "_resp_prep", ".png", sep = ""))
+
+}
+
+data <- read.csv(file = paste(prep_path, "prepStudy1_G2_T2_Synchronous.csv", sep = ""), sep = ",", header = TRUE)
+```
+
+
+
+- Run crqa on all the pre-processed time-series and save the output (don't forget to add columns with study, group, condition and trial). Tip: remember to first assess optimal parameters (dimensions, delay, radius) across all timeseries. Tip: it will often fail, just take whatever parameters you get, select optimal across timeseries parameters and run crqa on all timeseries with those. Tip: double check the rr. When I ran the loop, I got very low rr, so I adjusted the radius until the average of rr across all pairs was approx. 4%.
+
+
+Parameter which we want to look at:
+    - lmax --> length of the longest line
+    - l --> the mean length of lines (do not count dots, but when there is two or more)
+    - RR --> recurrences (how many recurrences within the timeseries)
+    - trapping time, TT --> straight lines 
+    - Determinism, DET --> the ratio of all the recurrences, how many are part of a diaganol line
+
+
+```{r}
+
+prep_path = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/prep_data/"
+
+
+d <- read.csv(file = paste(prep_path,"prepStudy1_G2_T2_Synchronous.csv", sep = ""), sep = ",", header = TRUE)
+
+par = list(lgM = 50, steps = seq(1, 6, 1), radiusspan = 100, radiussample = 40, normalize = 0, rescale = 0, mindiagline = 2, minvertline = 2, tw = 0, whiteline = FALSE, recpt = FALSE, fnnpercent = 10, typeami = "mindip")
+
+ans = optimizeParam(d$down.HR1, d$down.HR2, par, min.rec = 3.5, max.rec = 4.5)
+
+
+Results=crqa(d$down.HR1, d$down.HR2, delay=0, embed=20, radius=0.288, normalize=0, rescale=0, mindiagline = 2, minvertline = 2)
+
+#RR <- Results[[1]]
+#DET <- Results[[2]]
+#maxL <- Results[[4]]
+# L <- Results[[5]]
+# TT <- Results[[9]]
+
+
+RP=Results$RP
+RP = matrix(as.numeric(RP), nrow = ncol(RP))
+cols = c("white","blue4")
+image(RP, xlab = "HR1", ylab = "HR2", col = cols)
+
+
+Profile=drpdfromts(d$down.HR1, d$down.HR2 ,datatype = 'continuous',ws=50,radius=0.288)
+timecourse = round( seq(-5000,5000,100)/1000, digit = 1)
+maxlag = Profile$maxlag/1000
+profile = Profile$profile*100
+Prof=data.frame(profile)
+ggplot(Prof, aes(timecourse,profile))+geom_line()+ geom_vline(xintercept = timecourse[maxlag], colour='red')
+```
+
+
+
+
+
+
+
+
+```{r}
+
+recur_plot_path = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/recur_plot/"
+
+prep_path = "/Users/signeklovekjaer/Documents/CognitiveScience/3.semester/Experimental methods 3/assignment 4/prep_data/"
+
+#FIND OPTIMATION PARAMETERS
+
+#filename = "prepStudy1_G2_T2_Synchronous.csv"
+
+files_prep <- list.files(path = prep_path)
+
+files_prep
+
+
+opti <- function(filename) {
+  #read data
+  data <- read.csv(file = paste(prep_path, filename, sep = ""), sep = ",", header = TRUE)
+  
+  # parse filename
+  meta = str_extract_all(filename, "\\d+")
+  cond = substr(filename, 18, 23)
+  study = as.numeric(meta[[1]][1])
+  pair = as.numeric(meta[[1]][2])
+  trial = as.numeric(meta [[1]][3])
+  
+  par = list(lgM = 50, steps = seq(1, 6, 1), radiusspan = 100, radiussample = 40, normalize = 0, rescale = 0, mindiagline = 2, minvertline = 2, tw = 0, whiteline = FALSE, recpt = FALSE, fnnpercent = 10, typeami = "mindip")
+  
+  #find optimation parameters for each pair 
+  ans = rep(NA,3)
+  
+  try(expr = (ans = optimizeParam(data$down.HR1, data$down.HR2, par, min.rec = 2.0, max.rec = 5.0)))
+  #ans = optimizeParam(data$down.HR1, data$down.HR2, par, min.rec = 2.0, max.rec = 5.0)
+  
+  try(expr = (delay = as.numeric(ans[[3]])))
+  
+  try(expr = (embed = as.numeric(ans[[2]])))
+  
+  try(expr = (radius = as.numeric(ans[[1]])))
+  
+  
+  
+  output = data_frame(pair, study, cond, trial, delay, embed, radius)
+  
+  return(output)
+  
+}
+
+
+
+opti_data <- data.frame(matrix(ncol = 7, nrow = 0))
+
+for (d in files_prep) {
+  o = opti(d)
+  print(d)
+  opti_data = rbind(opti_data,o)
+  
+}
+
+#find the optimal parameters
+
+delay <- median(opti_data$delay, na.rm = TRUE)
+embed <- median(opti_data$embed, na.rm = TRUE)
+radius <-median(opti_data$radius, na.rm = TRUE)
+
+delay
+embed
+radius
+```
+
+
+
+
+```{r}
+#RECURRENCE
+
+recur <- function(filename) {
+  #read data
+  data <- read.csv(file = paste(prep_path, filename, sep = ""), sep = ",", header = TRUE)
+  
+  # parse filename
+  meta = str_extract_all(filename, "\\d+")
+  cond = substr(filename, 18, 23)
+  study = as.numeric(meta[[1]][1])
+  pair = as.numeric(meta[[1]][2])
+  trial = as.numeric(meta [[1]][3])
+
+  
+  Results=crqa(data$down.HR1, data$down.HR2, delay, embed, radius, normalize=0, rescale=0, mindiagline = 2, minvertline = 2)
+
+  RR <- Results[[1]]
+  DET <- Results[[2]]
+  maxL <- Results[[4]]
+  L <- Results[[5]]
+  TT <- Results[[9]]
+  
+  #RP=Results$RP
+  #RP = matrix(as.numeric(RP), nrow = ncol(RP))
+  #cols = c("white","blue4")
+  #p = image(RP, xlab = "HR1", ylab = "HR2", col = cols)
+  
+  #ggsave(p, file = paste(recur_plot_path, d, "_HR_recur", ".png", sep = ""))
+  
+  #create output
+  output = data.frame(pair, study, cond, trial, RR, DET, maxL, L, TT)
+  
+  return(output)
+  
+}
+
+
+recur_data <- data.frame(matrix(ncol = 9, nrow = 0))
+
+
+for (d in files_prep) {
+  p = recur(d)
+  recur_data = rbind(recur_data,p)
+  
+}
+
+
+#data <- read.csv(file = paste(prep_path, "Study1_G1_T1_Synchronous.csv_prep.csv", sep = ""), sep = ",", header = TRUE)
+
+#shuffled pairs
+#for sample just say sample()
+
+#surrogate pairs
+#participants = 1:10
+#combinations =expand.grid(p1 = participants, p2 = participants) %>%
+#dplyr::filter(p1!= p2)
+```
+
+#THINKS TO REMEMBER
+
+change to cubic spline 
+
+look at how many outlirs are removed
+
+maybe exclude data becuase of too many too many outliers removed
+
+
+
+### Creating controls: shuffled controls
+ - loop through all pairs and conditions
+ - shuffle the timeseries (take a timeseries and rearrange its values in a random order). Tip check the sample() function
+ - run crqa and save the output. NB. which delay, embed, radius parameters should you use?
+ - statistically compare the crqa indexes in real and shuffled pairs
+ 
+ 
+```{r}
+#RECURRENCE - shuffled controls
+
+recur_shuffle <- function(filename) {
+  #read data
+  data <- read.csv(file = paste(prep_path, filename, sep = ""), sep = ",", header = TRUE)
+  
+  # parse filename
+  meta = str_extract_all(filename, "\\d+")
+  cond = substr(filename, 18, 23)
+  study = as.numeric(meta[[1]][1])
+  pair = as.numeric(meta[[1]][2])
+  trial = as.numeric(meta [[1]][3])
+
+  
+  Results=crqa(sample(data$down.HR1), sample(data$down.HR2), delay, embed, radius, normalize=0, rescale=0, mindiagline = 2, minvertline = 2)
+
+  RR <- Results[[1]]
+  DET <- Results[[2]]
+  maxL <- Results[[4]]
+  L <- Results[[5]]
+  TT <- Results[[9]]
+  
+  #RP=Results$RP
+  #RP = matrix(as.numeric(RP), nrow = ncol(RP))
+  #cols = c("white","blue4")
+  #p = image(RP, xlab = "HR1", ylab = "HR2", col = cols)
+  
+  #ggsave(p, file = paste(recur_plot_path, d, "_HR_recur", ".png", sep = ""))
+  
+  #create output
+  output = data.frame(pair, study, cond, trial, RR, DET, maxL, L, TT)
+  
+  return(output)
+  
+}
+
+
+recur_data_shuffle <- data.frame(matrix(ncol = 9, nrow = 0))
+
+
+for (d in files_prep) {
+  p = recur_shuffle(d)
+  recur_data_shuffle = rbind(recur_data_shuffle,p)
+  
+}
+
+#replace na with 0 
+```
+
+HOW TO STATISTICALLY COMPARE???
+- compare the means for the different parameters
+
+
+```{r}
+#RECURRENCE - surrogate controls
+
+files_prep
+#create dataframe with all data
+all_data = data.frame()
+
+for (d in files_prep) {
+  data <- read.csv(file = paste(prep_path, d, sep = ""), sep = ",", header = TRUE)
+  all_data = rbind(all_data, data)
+  
+}
+
+#turn into long format, create two new variables (participant and HR), and add down.HR1 and down.HR2 in those two
+#gather() takes multiple columns, and gathers them into key-value pairs: it makes “wide” data longer
+HR = gather(all_data, "participant", "HR", down.HR1, down.HR2) %>%
+  mutate(participant = str_extract(participant, "\\d+")) %>% #use only digit in participant column
+  select(-down.Resp1, -down.Resp2) #deselect columns 
+
+#same as with HR
+resp = gather(all_data, "participant", "Resp", down.Resp1, down.Resp2) %>%
+  mutate(participant = str_extract(participant, "\\d+")) %>% 
+  select(-down.HR1, -down.HR2)
+
+#new dataframe, join HR and resp dataframes
+surrogate_data = full_join(HR, resp) %>%
+  mutate(participant = str_c(pair, participant)) #create variable to have unique combination of pair and participant
+
+#create three datasets, one for each condition
+
+selfpaced <- subset(surrogate_data, cond == "SelfPa"| cond == "Conver" | cond == "_Conve" | cond == "_SelfP", select = c(pair, study, cond, trial, down.time, participant, HR, Resp))
+
+selfpaced$cond <- "selfpa"
+
+turntaking <- subset(surrogate_data, cond == "TurnTa" | cond == "_TurnT", select = c(pair, study, cond, trial, down.time, participant, HR, Resp))
+
+turntaking$cond <- "turnta"
+
+sync <- subset(surrogate_data, cond == "Synchr" | cond == "_Synch", select = c(pair, study, cond, trial, down.time, participant, HR, Resp))
+
+sync$cond <- "synchr"
+  
+#take all the unique combinations
+selfpaced_participants = unique(selfpaced$participant)
+turntaking_participants = unique(turntaking$participant)
+sync_participants = unique(sync$participant)
+
+selfpaced_participants 
+turntaking_participants
+sync_participants
+
+
+
+
+
+#shuffle all possible combinations of participants
+
+selfpaced_combination = expand.grid(p1 = selfpaced_participants, p2 = selfpaced_participants) %>%
+  dplyr::filter(p1 != p2) #participant 1 cannot be the same as participant 2 
+
+
+turntaking_combination = expand.grid(p1 = turntaking_participants, p2 = turntaking_participants) %>%
+  dplyr::filter(p1 != p2) #participant 1 cannot be the same as participant 2 
+
+
+sync_combination = expand.grid(p1 = sync_participants, p2 = sync_participants) %>%
+  dplyr::filter(p1 != p2) #participant 1 cannot be the same as participant 2 
+
+
+
+
+```
+
+
+#HERFRA FUNGERER DET IKKE
+
+```{r}
+#HERFRA FUNGERER DET IKKE
+
+
+
+#selfpaced
+selfpaced_fit_surrogate <- function(p1, p2) {
+  hr1 = filter(selfpaced, participant == p1)$HR
+  
+}
+
+
+selfpaced_surrogate_results = map2_df(selfpaced_combination$p1, selfpaced_combination$p2, selfpaced_fit_surrogate)
+
+
+
+#
+selfpaced_hr1_fit_surrogate <- function(p1) {
+  hr1 = filter(selfpaced, participant == p1)$HR
+  
+  output1 = data.frame(hr1)
+  
+  return(output)
+}
+
+selfpaced_hr2_fit_surrogate <- function(p2) {
+  hr2 = filter(selfpaced, participant == p2)$HR
+  
+  output2 = data.frame(hr2)
+  
+  return(output2)
+}
+
+
+
+for (f in selfpaced_combination) {
+  w = selfpaced_fit_surrogate(f)
+}
+
+
+what <- selfpaced_fit_surrogate(21)  
+
+what
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+#create new dataframe with values for participant 21 and 11
+
+selfpaced_example <- subset(selfpaced, participant == "11"| participant == "21", select = c(pair, study, cond, trial, down.time, participant, HR))
+
+spread(selfpaced_example,participant)
+
+selfpaced_example %>%
+  spread(participant, HR)
+
+selfpaced_example_11 <- subset(selfpaced, participant == "11", select = c(pair, study, cond, trial, down.time, participant, HR))
+
+selfpaced_example_21 <- subset(selfpaced, participant == "21", select = c(pair, study, cond, trial, down.time, participant, HR))
+
+
+
+merge(selfpaced_example_11, selfpaced_example_21, by.x = 2, by.y = 0, all.x = TRUE)
+
+
+all <- full_join(selfpaced_example_11, selfpaced_example_21, by = "down.time")
+
+full_join()
+
+```
+```
+
+
+ 
+### TRICKY! Creating controls: surrogate pair controls
+ - Per each real pair, identify at least one surrogate pair (matching one of the participants, with somebody doing the same task, but in a different pair). Tip: Malte will share a method to do this on screen.
+ - Run crqa on all the surrogate pairs and save the output. NB. which delay, embed, radius parameters should you use?
+ - Test whether crqa shows a difference between real and surrogate pairs
+ 
+ 
+
+### Testing effects of conditions
+ - make a (probably underpowered) mixed model testing effects of the different conditions on heart rate and respiration coordination
+ - N.B: would it make sense to include surrogate pairs? and if so how? what would that tell you?
+ 
+ 
+
+### Effects of respiration coordination on heart rate coordination
+ - describe how you would test those.
+ - Optional: run the models and report them
+ 
+ 
